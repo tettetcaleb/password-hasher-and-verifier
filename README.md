@@ -502,6 +502,325 @@ hashlib     # stdlib
 statistics  # stdlib
 time        # stdlib
 
+# `login_system.py` — Production-Grade Password Auth System
+
+A complete, self-contained authentication backend that integrates every
+concept from the 8-step series into a single, working module.
+
+---
+
+## What it does
+
+| Feature | Detail |
+|---|---|
+| **Hashing** | bcrypt (rounds=12) + HMAC-SHA256 pepper — gen 4 |
+| **Lazy migration** | Automatically upgrades gen 0-3 hashes to gen 4 on login |
+| **Account lockout** | Configurable threshold + lockout duration |
+| **Timing safety** | Dummy bcrypt work on unknown usernames; `bcrypt.checkpw` uses constant-time comparison internally |
+| **Storage** | SQLite (`:memory:` by default; any path for persistence) |
+| **Audit log** | Every hash upgrade is recorded in `upgrade_log` |
+
+---
+
+## Supported hash generations
+
+| Gen | Scheme constant | Description |
+|---|---|---|
+| 0 | `Scheme.MD5_PLAIN` | Unsalted MD5 — import only, never register |
+| 1 | `Scheme.SHA256_SALTED` | Salted SHA-256 — import only |
+| 2 | `Scheme.BCRYPT_8` | bcrypt cost=8 — import only |
+| 3 | `Scheme.BCRYPT_12` | bcrypt cost=12, no pepper — acceptable baseline |
+| 4 | `Scheme.BCRYPT_PEPPER` | bcrypt cost=12 + HMAC pepper — **current target** |
+
+All gen 0-3 users are transparently re-hashed to gen 4 on their next login.
+
+---
+
+## Quick start
+
+```python
+from login_system import LoginSystem, Config
+import os
+
+system = LoginSystem(Config(
+    bcrypt_rounds=12,
+    pepper=bytes.fromhex(os.environ["APP_PEPPER"]),
+    db_path="users.db",
+))
+
+# Register
+system.register("alice", "HunterTwo99!")
+
+# Login
+result = system.login("alice", "HunterTwo99!")
+print(result.success, result.message, f"{result.elapsed_ms:.0f}ms")
+
+# Change password
+system.change_password("alice", "HunterTwo99!", "NewPass2025!")
+```
+
+---
+
+## Config reference
+
+```python
+@dataclass
+class Config:
+    bcrypt_rounds:       int   = 12        # OWASP min=10, recommended=12
+    pepper:              bytes = os.urandom(32)   # load from env in production
+    db_path:             str   = ":memory:"
+    max_login_attempts:  int   = 5         # failures before lockout
+    lockout_seconds:     int   = 300       # 5 minutes
+    min_password_len:    int   = 8
+    max_password_len:    int   = 72        # bcrypt hard limit
+```
+
+### Pepper in production
+
+Never hardcode the pepper. Load it from your secrets manager:
+
+```bash
+export APP_PEPPER=$(python3 -c "import os; print(os.urandom(32).hex())")
+```
+
+```python
+pepper=bytes.fromhex(os.environ["APP_PEPPER"])
+```
+
+Rotate the pepper annually using lazy re-hash (same pattern as the upgrade
+strategy — verify with old pepper at login, re-hash with new pepper, update DB).
+
+---
+
+## API reference
+
+### `register(username, password) → None`
+
+Creates a new account hashed under the current scheme (gen 4).
+
+- Raises `ValueError` if the username is taken or the password fails validation.
+- Normalises username to lowercase.
+
+### `login(username, password) → LoginResult`
+
+Authenticates and, if the stored hash is outdated, upgrades it transparently.
+
+```python
+@dataclass
+class LoginResult:
+    success:       bool
+    message:       str
+    hash_upgraded: bool   # True if the hash was migrated this login
+    old_scheme:    str
+    new_scheme:    str
+    elapsed_ms:    float
+```
+
+Timing-safe: unknown usernames run a full dummy bcrypt hash so response time
+does not reveal whether the account exists.
+
+### `change_password(username, old_password, new_password) → bool`
+
+Verifies the old password first. Saves the new one under the current scheme.
+Returns `False` (not an exception) on bad credentials.
+
+### `get_user(username) → UserRecord | None`
+
+Returns the raw DB record. Useful for debugging and admin tooling.
+
+### `list_users() → list[str]`
+
+Returns all usernames, sorted alphabetically.
+
+### `scheme_stats() → dict[str, int]`
+
+Returns `{scheme_name: user_count}`. Use this to track migration progress.
+
+```python
+# Example output mid-migration:
+{"md5_plain": 2, "bcrypt_pepper": 6}
+```
+
+### `upgrade_log() → list[dict]`
+
+Full history of every hash upgrade, with timestamps.
+
+### `import_legacy_user(username, scheme, stored_hash) → None`
+
+Imports a user from an old system without knowing their plaintext.
+They will be migrated to gen 4 on first login.
+
+```python
+system.import_legacy_user(
+    "bob",
+    Scheme.MD5_PLAIN.value,
+    hashlib.md5("password123".encode()).hexdigest(),
+)
+```
+
+---
+
+## Database schema
+
+Two tables are created automatically:
+
+```sql
+CREATE TABLE users (
+    username        TEXT PRIMARY KEY,
+    scheme          TEXT NOT NULL,
+    password_hash   TEXT NOT NULL,
+    failed_attempts INTEGER NOT NULL DEFAULT 0,
+    locked_until    REAL    NOT NULL DEFAULT 0,
+    created_at      REAL    NOT NULL,
+    last_login_at   REAL    NOT NULL DEFAULT 0,
+    pepper_version  INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE upgrade_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    username    TEXT    NOT NULL,
+    old_scheme  TEXT    NOT NULL,
+    new_scheme  TEXT    NOT NULL,
+    upgraded_at REAL    NOT NULL
+);
+
+# `cli.py` — Interactive CLI for the Password Hashing Series
+
+A single entry point that ties together all 8 educational demos **and** a
+live login system you can interact with in real time.
+
+---
+
+## Requirements
+
+```
+bcrypt
+colorama   # optional — for coloured output
+```
+
+All 8 demo modules (`hash.py`, `rainbow_table.py`, `brute_force.py`,
+`timing_attack.py`, `salt_deep.py`, `cost_factor.py`, `pepper.py`,
+`upgrade_strategy.py`) and `login_system.py` must be in the same directory.
+
+---
+
+## Running
+
+```bash
+python cli.py          # interactive REPL
+python cli.py demo 1   # run a single demo and exit
+python cli.py demo all # run all 8 demos and exit
+python cli.py login    # jump straight to the login prompt
+```
+
+---
+
+## Commands
+
+### Demo commands (educational, read-only)
+
+| Command | Alias | What it runs |
+|---|---|---|
+| `demo 1` | `demo hash` | bcrypt vs MD5/SHA-256 basics |
+| `demo 2` | `demo rainbow` | Rainbow table attack simulation |
+| `demo 3` | `demo brute` | Brute force & dictionary attack |
+| `demo 4` | `demo timing` | Timing attack & constant-time comparison |
+| `demo 5` | `demo salt` | Salt deep dive |
+| `demo 6` | `demo cost` | Cost factor benchmarking (takes ~30s) |
+| `demo 7` | `demo pepper` | Pepper / secret key hardening |
+| `demo 8` | `demo upgrade` | Hash upgrade / lazy migration strategy |
+| `demo all` | — | All 8 steps in sequence |
+
+### Live system commands (interact with the real login system)
+
+| Command | Description |
+|---|---|
+| `register` | Create a new account (hashed with bcrypt + pepper, gen 4) |
+| `login` | Authenticate; watch the hash upgrade message if the account was migrated |
+| `passwd` | Change your password after verifying the old one |
+| `whoami` | Inspect your stored user record (scheme, last login, lock status) |
+| `users` | List all registered accounts and their current hash scheme |
+| `stats` | Scheme distribution table + full upgrade log |
+| `import-legacy` | Seed the DB with two legacy users (MD5 and salted-SHA256) to demo migration |
+| `help` | Show the command reference |
+| `quit` / `exit` | Exit |
+
+---
+
+## Recommended walkthrough
+
+Follow this sequence to see the full story in about 20 minutes:
+
+```
+demo 1          # understand why bcrypt exists
+demo 2          # see why unsalted hashes are catastrophic
+demo 3          # understand brute force economics
+demo 4          # learn why == is dangerous for hash comparison
+demo 5          # go deep on how salt actually works
+demo 6          # benchmark cost factor on your machine
+demo 7          # add pepper as a second line of defence
+demo 8          # understand how real systems migrate legacy hashes
+
+import-legacy   # seed two legacy accounts into the live DB
+stats           # see them listed as md5_plain / sha256_salted
+login           # log in as legacy_alice with "Sunshine99"
+                # → watch "hash upgraded: md5_plain → bcrypt_pepper"
+stats           # legacy_alice is now gen 4
+register        # create your own account
+login           # verify it
+whoami          # inspect the stored record
+```
+
+---
+
+## Persistence & pepper
+
+The live system stores accounts in `passwords_demo.db` (SQLite, created
+automatically in the current directory).
+
+The pepper is generated fresh on each process start and stored in the
+environment variable `DEMO_APP_PEPPER` for the lifetime of the process.
+Because it is not persisted to disk, existing password hashes from a previous
+session will not verify — this is intentional for a demo tool.
+
+To persist the pepper across restarts:
+
+```bash
+# Generate and save once
+python3 -c "import os; print(os.urandom(32).hex())" > .pepper
+export DEMO_APP_PEPPER=$(cat .pepper)
+python cli.py
+```
+
+---
+
+## Architecture
+
+```
+cli.py
+│
+├── login_system.py          ← live auth backend
+│   ├── Config               ← all tuneable knobs
+│   ├── LoginSystem          ← register / login / change_password
+│   ├── _Database            ← SQLite wrapper
+│   └── _verify / _hash      ← per-scheme crypto dispatch
+│
+└── demo modules (read-only, no shared state)
+    ├── hash.py
+    ├── rainbow_table.py
+    ├── brute_force.py
+    ├── timing_attack.py
+    ├── salt_deep.py
+    ├── cost_factor.py
+    ├── pepper.py
+    └── upgrade_strategy.py
+```
+
+The CLI calls each demo module's `demonstrate_*` function directly — no
+subprocess spawning, no file parsing, no monkey-patching. The live system
+runs independently in its own SQLite database and shares nothing with the demos.
+
+
  
 
 

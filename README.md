@@ -420,6 +420,88 @@ bcrypt
 hashlib  # stdlib
 os       # stdlib
 
+Step 6: Cost Factor Benchmarking
+What This Step Does
+The cost factor is what makes bcrypt future-proof. This step benchmarks actual hash time across rounds 4–14, visualizes the exponential doubling effect, projects attacker throughput at each level, and recommends the right cost factor for your hardware based on a latency budget.
+
+File
+password_hasher_step6.py
+
+New Functions
+benchmark_cost_factor(password, rounds, samples) -> list[dict]
+Times bcrypt hashing at each cost factor level. Averages over samples runs per level to smooth noise. Returns mean and stdev in milliseconds.
+compare_md5_throughput(password, duration_seconds) -> int
+Counts raw MD5 hashes per second on the current machine. Establishes a baseline to show how many orders of magnitude faster MD5 is than bcrypt.
+project_attacker_throughput(results, md5_per_sec)
+For each cost factor: guesses per second, time to exhaust a 1M-entry dictionary, and MD5-equivalent hashes per bcrypt attempt. Makes the attacker cost concrete.
+recommend_cost_factor(results, target_ms) -> int
+Returns the highest cost factor whose mean hash time stays under target_ms. Use this to tune bcrypt to your server's login latency budget.
+
+Sample Output
+============================================================
+STEP 6: Cost Factor Benchmarking
+============================================================
+
+[1] MD5 throughput baseline (1 second)
+    3,847,221 MD5 hashes/sec on this machine
+    An attacker with a GPU gets 10,000-100,000x more.
+
+[2] bcrypt hash time by cost factor (avg of 3 runs each)
+    Note: each +1 to rounds doubles the time
+
+    rounds= 4  2^4=    16       3.1ms
+    rounds= 5  2^5=    32       6.0ms
+    rounds= 6  2^6=    64      12.1ms
+    rounds= 7  2^7=   128      24.3ms
+    rounds= 8  2^8=   256      48.7ms
+    rounds= 9  2^9=   512      97.2ms
+    rounds=10  2^10= 1024     195.1ms
+    rounds=11  2^11= 2048     389.4ms
+    rounds=12  2^12= 4096     778.2ms
+    rounds=13  2^13= 8192    1557.1ms
+    rounds=14  2^14=16384    3112.8ms
+
+[3] Attacker throughput per cost factor
+  Rounds     ms/hash   guesses/sec   1M dict (hrs)    MD5 equiv
+  ------------------------------------------------------------
+  4            3.1      322.58             0.9           11,921
+  8           48.7       20.53            13.5          187,289
+  10         195.1        5.13            54.1          750,335
+  12         778.2        1.28           216.2        2,994,720
+  14        3112.8        0.32           864.7       11,973,922
+
+[4] Doubling effect
+    rounds=4 → 5:   3.1ms →   6.0ms  (×1.94)
+    rounds=5 → 6:   6.0ms →  12.1ms  (×2.02)
+    rounds=6 → 7:  12.1ms →  24.3ms  (×2.01)
+    ...
+
+[5] Cost factor recommendation for this machine
+    Budget 100ms/login → use rounds=9
+    Budget 200ms/login → use rounds=10
+    Budget 300ms/login → use rounds=10
+    Budget 500ms/login → use rounds=11
+
+    OWASP 2024 minimum: rounds=10
+    OWASP 2024 recommended: rounds=12
+
+The Core Insight
+The cost factor is an exponent, not a multiplier:
+RoundsIterationsApprox time101,024~100ms112,048~200ms124,096~400ms138,192~800ms1416,384~1,600ms
+Every +1 doubles the work for attacker and defender equally — but the defender only pays once per login, while the attacker pays once per guess across every user. That asymmetry is the entire point.
+Tuning guidance (OWASP 2024):
+
+Minimum: rounds=10
+Recommended: rounds=12
+Rule: pick the highest value that keeps login response under ~300ms on your production hardware
+
+
+Dependencies
+bcrypt
+hashlib     # stdlib
+statistics  # stdlib
+time        # stdlib
+
  
 
 

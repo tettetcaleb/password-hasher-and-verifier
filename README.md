@@ -231,8 +231,114 @@ itertools  # stdlib
 string     # stdlib
 
 
-Next Step
-Step 4: Timing Attack Demo — shows how naive string comparison (==) leaks information about the hash through response time differences, and why bcrypt's checkpw uses constant-time comparison to prevent it.
+# Password Hasher & Verifier — Step 4: Timing Attack Demo
 
+## What This Step Does
+
+Even if your hashes are secure, comparing them the wrong way leaks information. This step demonstrates how naive string comparison (`==`) allows an attacker to figure out a hash one character at a time by measuring response times — and shows how constant-time comparison eliminates the leak entirely.
+
+---
+
+## File
+
+`password_hasher_step4.py`
+
+---
+
+## New Functions
+
+### `naive_compare(a: str, b: str) -> bool`
+Plain `==` comparison. Exits at the first mismatched character — meaning a guess that matches 16 characters returns slightly slower than one that matches 0. That difference is measurable.
+
+### `constant_time_compare(a: str, b: str) -> bool`
+Uses `hmac.compare_digest`. Compares every byte regardless of where the mismatch is. Response time is identical whether 0 or 31 characters match.
+
+### `measure_comparison_time(target, candidate, compare_fn, runs) -> float`
+Runs a comparison `runs` times and returns the median in microseconds. Median filters out OS scheduling noise better than mean.
+
+### `build_timing_candidates(target_hash) -> list`
+Generates candidates with increasing prefix overlap — 0, 4, 8, 16, 24, 31 matching characters, then a full match. Simulates an attacker probing the hash character by character.
+
+### `demonstrate_timing_attack()`
+Runs the full comparison side by side and prints timing deltas for naive vs constant-time.
+
+---
+
+## Sample Output
+
+```
+============================================================
+STEP 4: Timing Attack Demo
+============================================================
+
+Target MD5 hash: 2b08f0e879d0e9a3...
+Each timing result is the median of 200 runs.
+
+[1] Naive comparison (==) — timing leaks match length
+    Candidate              Naive (µs)
+    ------------------------------------
+    0 chars match               0.041
+    4 chars match               0.044
+    8 chars match               0.047
+    16 chars match              0.053
+    24 chars match              0.061
+    31 chars match              0.068
+    full match                  0.074
+
+[2] Constant-time comparison — timing is flat
+    Candidate              Const-time (µs)
+    ---------------------------------------
+    0 chars match               0.071
+    4 chars match               0.072
+    8 chars match               0.071
+    16 chars match              0.071
+    24 chars match              0.072
+    31 chars match              0.071
+    full match                  0.072
+
+[3] Timing delta
+    Naive range (max - min):         0.033 µs  ← attacker reads this
+    Constant-time range (max - min): 0.001 µs  ← nothing to read
+
+[4] bcrypt.checkpw uses constant-time comparison internally
+    Wrong password  — median: 253.1ms
+    Correct password — median: 255.4ms
+    Timing difference is noise, not signal
+```
+
+---
+
+## Key Concept
+
+A timing attack turns a hash comparison into an oracle. With naive `==`:
+
+- Attacker sends a guess that starts with `"a..."` — measures response time
+- Sends a guess starting with `"b..."` — slightly slower? First char might be `"b"`
+- Repeats for each position in the hash
+
+In practice this requires many samples and statistical analysis to extract signal from noise — but it's a real attack class, especially relevant in network authentication where response times are measurable.
+
+**The fix is one line:** replace `a == b` with `hmac.compare_digest(a, b)`.
+
+bcrypt gets this right automatically — `bcrypt.checkpw` uses constant-time comparison internally, and the ~250ms cost factor drowns out any timing signal anyway.
+
+---
+
+## Dependencies
+
+```
+bcrypt
+hashlib     # stdlib
+hmac        # stdlib
+statistics  # stdlib
+time        # stdlib
+```
+
+---
+
+## Next Step
+
+**Step 5: Salt Deep Dive** — generates multiple hashes of the same password to show unique salts in action, extracts and inspects the salt embedded in a bcrypt hash, and demonstrates how salts make per-user cracking costs independent.
+ 
 
 

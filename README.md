@@ -339,6 +339,87 @@ time        # stdlib
 ## Next Step
 
 **Step 5: Salt Deep Dive** — generates multiple hashes of the same password to show unique salts in action, extracts and inspects the salt embedded in a bcrypt hash, and demonstrates how salts make per-user cracking costs independent.
+
+
+Step 5: Salt Deep Dive
+What This Step Does
+Salts are why two users with the same password end up with completely different hashes. This step breaks down exactly what a salt is, where bcrypt stores it, why a shared global salt is almost as bad as no salt, and what salts actually cost an attacker at scale.
+
+File
+password_hasher_step5.py
+
+New Functions
+inspect_bcrypt_hash(hashed: bytes) -> dict
+Parses a bcrypt hash string into its components: version, rounds, embedded salt, and embedded hash. bcrypt stores everything needed for verification in one string — no separate salt column required.
+demonstrate_unique_salts(password: str, count: int) -> list[bytes]
+Hashes the same password multiple times. Every result is different. Shows that bcrypt generates a fresh random salt on every call.
+manual_md5_with_salt(password: str, salt: bytes) -> str
+Demonstrates manual salting with MD5 — what developers had to do themselves before modern password hashing libraries. Shows the footgun: you have to get it right every time.
+demonstrate_global_salt_failure(password: str)
+Hashes multiple users with the same shared salt. Shows that if Alice and Bob have the same password, they still get the same hash — attacker builds one table with the known salt and cracks all matching users at once.
+demonstrate_per_user_salt(password: str)
+Same scenario with bcrypt. Alice and Bob have different hashes despite the same password. Attacker must crack each hash independently.
+
+Sample Output
+============================================================
+STEP 5: Salt Deep Dive
+============================================================
+
+[1] Hashing 'MyPassword123' five times with bcrypt
+    Hash 1: ...X8z3mK9pLqR2nW7vY4tA   (salt differs each time)
+    Hash 2: ...B2mN5hJ8kP3xQ6wZ1sC
+    Hash 3: ...Y7pR4nW9zK2mX5vA8tQ
+    Hash 4: ...Q1sC6wZ3mK9pLqR2nW7
+    Hash 5: ...A8tY4nW7vX5mK2pR9zQ
+    All hashes unique: True
+    All still verify correctly: True
+
+[2] Anatomy of a bcrypt hash string
+    Full:    $2b$12$X8z3mK9pLqR2nW7vY4tAuO3mN5hJ8kP3xQ6wZ1sCmY7pR4n
+    Version: $2b$   (bcrypt variant)
+    Rounds:  $12$   (cost factor — 2^12 = 4096 iterations)
+    Salt:    X8z3mK9pLqR2nW7vY4tAuu  (22 base64 chars, 128 bits)
+    Hash:    O3mN5hJ8kP3xQ6wZ1sCmY7pR4n  (31 base64 chars)
+    The salt is stored IN the hash — no separate column needed.
+
+[3] Why a global salt fails
+    With a global (shared) salt:
+      alice    → 7f3d8a2b1c9e4f6d...
+      bob      → 7f3d8a2b1c9e4f6d...   ← same as alice
+      carol    → 2a9c7b4e1d8f3a6c...
+    Alice and Bob have the same hash — attacker knows they share a password.
+    Crack one, crack both. Global salt solved nothing.
+
+[4] Per-user unique salts — the right approach
+    With per-user random salts (bcrypt):
+      alice    salt=X8z3mK9pLqR2nW7vY4tAu  verified=True
+      bob      salt=B2mN5hJ8kP3xQ6wZ1sCmY  verified=True
+      carol    salt=Y7pR4nW9zK2mX5vA8tQu1  verified=True
+    Alice and Bob have different hashes despite the same password.
+
+[5] What salts cost an attacker
+    At 12 rounds (~250ms per bcrypt attempt):
+           100 users →    6.9 hours  (single thread)
+        10,000 users →   28.9 days
+     1,000,000 users →    7.9 years
+
+The bcrypt Hash Format
+$2b$12$X8z3mK9pLqR2nW7vY4tAuO3mN5hJ8kP3xQ6wZ1sCmY7pR4n
+ ─┬─ ─┬ ──────────────────────┬─────────────────────────
+  │   │                       │
+  │   cost factor (rounds)    salt (22 chars) + hash (31 chars)
+  version
+Everything needed for verification is in one string. No extra columns, no salt management, no footguns.
+
+Key Concept
+Salt approachEffectNo saltIdentical passwords = identical hashes. One table cracks all.Global saltStill identical for matching passwords. Same problem.Per-user random saltEach hash is independent. Attacker scales linearly with user count.
+The difference between global and per-user salt is the difference between "crack one, get all" and "crack each one separately." At bcrypt's cost factor, separately means years per million users.
+
+Dependencies
+bcrypt
+hashlib  # stdlib
+os       # stdlib
+
  
 
 

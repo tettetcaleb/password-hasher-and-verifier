@@ -22,7 +22,7 @@ demo 7        # pepper
 demo 8        # legacy hash migration
 
 import-legacy # seed two old accounts (MD5 + SHA-256)
-login         # log in as one, watch the hash upgrade
+login         # log in as one, watch thehash upgrade
 stats         # confirm they're now gen 4
 Or run a single demo and exit:
 bashpython cli.py demo 3
